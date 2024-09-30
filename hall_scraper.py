@@ -27,11 +27,19 @@ from selenium.webdriver.support import expected_conditions as EC
 skip_meals = ["All"]
 
 def main():
-    get_locs()
+    food_info = get_daily()
+    for hall in food_info:
+        print(f"Dining Hall: {hall}")
+        print(food_info[hall])
 
-def get_locs():
+def get_daily():
     '''Gets URLs for dining hall landing pages.
+
+    Returns:
+        Dictionary where keys are dining hall names
+        and values are DataFrames with food item info.
     '''
+    food_info = dict()
     try:
         options = Options()
 
@@ -56,15 +64,18 @@ def get_locs():
     try: # Open dining hall urls
         halls = hall_menu.find_elements(By.CSS_SELECTOR, 'li > a')
         urls = [h.get_attribute('href') for h in halls]
-        for u in urls:
-            _get_meals(driver, u)
+        for i in range(len(urls)):
+            dining_hall, df  = _get_meals(driver, urls[i], True if i == 0 else False)
+            if dining_hall == -1:
+                continue
+            food_info[dining_hall] = df
     except Exception as e:
         print(f"ERROR: Unable to open dining hall URLS: {e}")
         driver.quit()
         return -1
     
     driver.quit()
-    return 0
+    return food_info
 
 def _del_privacy(driver):
     '''Addresses privacy notice.
@@ -93,19 +104,30 @@ def _del_privacy(driver):
         print(f"Error clicking privacy notice close.")
     time.sleep(2)
 
-def _get_meals(driver, url):
+def _get_meals(driver, url, privacy):
     '''Gets food information for dining hall.
 
     Args:
         driver: Selenium Chrome webdriver
         url: Link to dining hall landing page.
+
+    Returns:
+        Pandas DataFrame where each row contains information for one food item
+        with the following columns:
+            food_name
+            dietary_restriction
+            allergen
+            description
+            meal
+            station
+            dining_hall
     '''
     # driver = webdriver.Chrome()
     # driver.get("https://dining.columbia.edu/content/ferris-booth-commons-0")
 
     wait = WebDriverWait(driver, 10)
 
-    print(f"New Tab: {url}")
+    print(f"\tNew Tab: {url}")
     driver.execute_script(f"window.open('{url}', '_blank');")
     driver.switch_to.window(driver.window_handles[-1])
 
@@ -114,23 +136,26 @@ def _get_meals(driver, url):
             EC.presence_of_element_located((By.CLASS_NAME, 'node-title.ng-binding'))).text
         print(dining_hall)
     except:
-        print(f"ERROR: Unable to get dining hall name.")
-        return -1
-
-    if dining_hall in ["Grace Dodge Dining Hall", "Robert F. Smith Dining Hall"]:
-        # Grace Dodge doesn't have any menus to scrape.
-        return -1
-    _del_privacy(driver)
-
-    meal_elems = wait.until(
-        EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'div.cu-dining-menu-tabs button')))
+        print(f"\tERROR: Unable to get dining hall name.")
+        return -1, -1
     
+    if privacy:
+        _del_privacy(driver)
+
+    try:
+        meal_elems = wait.until(
+            EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'div.cu-dining-menu-tabs button')))
+    except Exception as e:
+        print(f"\tERROR: Unable to retrieve menu or no menu.")
+        return -1, -1
+    
+    food_list = []
     for m in meal_elems:
         meal = m.text
         if meal in skip_meals:
             continue
 
-        print(f"meal: {meal}")
+        # print(f"meal: {meal}")
 
         m.click()
         station_elems = wait.until(
@@ -139,31 +164,41 @@ def _get_meals(driver, url):
         food_container = wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, 'meal-items')))
 
         for i in range(len(food_container)):
-            print(f"\tstation:{stations[i]}")
+            # print(f"\tstation:{stations[i]}")
             food_elems = food_container[i].find_elements(By.CLASS_NAME, 'meal-item.angular-animate.ng-trans-fade-down.ng-scope')
             
             for f in food_elems:
                 food_name = f.find_element(By.TAG_NAME, 'h5').text
-                print(f"\t\tfood: {food_name}")
+                # print(f"\t\tfood: {food_name}")
                 dietary_restriction = []
                 allergen = []
+                description = ""
                 try:
-                    dietary_restriction = f.find_element(By.TAG_NAME, 'strong').text.split(',')
+                    dietary_restriction = f.find_element(By.TAG_NAME, 'strong').text.split(', ')
                 except NoSuchElementException as e:
                     #print("No dietary restrictions.")
                     pass
                 
                 try:
-                    allergen = f.find_element(By.TAG_NAME, 'em').text.strip("Contains: ").split(',')
+                    allergen = f.find_element(By.TAG_NAME, 'em').text.replace("Contains: ", "").split(', ')
                 except NoSuchElementException as e:
                     #print("No allergens.")
                     pass
 
-                print(f"\t\t\tdietary restrictions:{', '.join(dietary_restriction)}")
-                print(f"\t\t\tallergens: {', '.join(allergen)}")
+                try:
+                    description = f.find_element(By.CLASS_NAME, 'meal-description.ng-binding.ng-scope').text
+                except NoSuchElementException as e:
+                    pass
 
+                # print(f"\t\t\tdietary restrictions:{', '.join(dietary_restriction)}")
+                # print(f"\t\t\tallergens: {', '.join(allergen)}")
+                # print(f"\t\t\tdescritpion: {description}")
+                
+                food_list.append([food_name, dietary_restriction, allergen, description, meal, stations[i], dining_hall])
 
-
+    columns = ["food_name", "dietary_restrictions", "allergen", "description", "meal", "station", "dining_hall"]
+    df = pd.DataFrame(data=food_list, columns=columns)
+    return dining_hall, df
     
  
 if __name__ == "__main__":
