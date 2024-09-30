@@ -1,3 +1,21 @@
+'''Scraper for Columbia Dining Website that extracts daily menu information.
+
+Interacts with dynamic web pages and formats menu as dataframe.
+Prepares for insertion into database table.
+
+There is a main function for testing purposes.
+External facing function for module interfacing is get_locs().
+
+Typical usage example:
+
+python3 main.py
+
+from hall_scraper import get_locs
+'''
+
+# Imports
+import time
+import pandas as pd
 
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -6,14 +24,14 @@ from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import time
-
 skip_meals = ["All"]
 
 def main():
-    open_locs()
+    get_locs()
 
-def open_locs():
+def get_locs():
+    '''Gets URLs for dining hall landing pages.
+    '''
     try:
         options = Options()
 
@@ -39,7 +57,7 @@ def open_locs():
         halls = hall_menu.find_elements(By.CSS_SELECTOR, 'li > a')
         urls = [h.get_attribute('href') for h in halls]
         for u in urls:
-            get_meals(driver, u)
+            _get_meals(driver, u)
     except Exception as e:
         print(f"ERROR: Unable to open dining hall URLS: {e}")
         driver.quit()
@@ -48,7 +66,14 @@ def open_locs():
     driver.quit()
     return 0
 
-def del_privacy(driver):
+def _del_privacy(driver):
+    '''Addresses privacy notice.
+
+    If don't close privacy notice, can't click buttons for meal menu.
+
+    Args:
+        driver: Selenium Chrome webdriver
+    '''
     try: #this removes any notices if there is any at the top of the page
         button = driver.find_elements(By.XPATH, '//*[@id="alert-8927"]/div/div[2]/i')
         if button:
@@ -68,10 +93,15 @@ def del_privacy(driver):
         print(f"Error clicking privacy notice close.")
     time.sleep(2)
 
-def get_meals(driver, url):
+def _get_meals(driver, url):
+    '''Gets food information for dining hall.
+
+    Args:
+        driver: Selenium Chrome webdriver
+        url: Link to dining hall landing page.
+    '''
     # driver = webdriver.Chrome()
     # driver.get("https://dining.columbia.edu/content/ferris-booth-commons-0")
-    food_list = []
 
     wait = WebDriverWait(driver, 10)
 
@@ -90,20 +120,18 @@ def get_meals(driver, url):
     if dining_hall in ["Grace Dodge Dining Hall", "Robert F. Smith Dining Hall"]:
         # Grace Dodge doesn't have any menus to scrape.
         return -1
-    del_privacy(driver)
+    _del_privacy(driver)
 
     meal_elems = wait.until(
         EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'div.cu-dining-menu-tabs button')))
-    
-    meals = [m.text for m in meal_elems if m.text not in skip_meals]
-
-    
     
     for m in meal_elems:
         meal = m.text
         if meal in skip_meals:
             continue
+
         print(f"meal: {meal}")
+
         m.click()
         station_elems = wait.until(
             EC.presence_of_all_elements_located((By.CLASS_NAME, 'station-title.ng-binding')))
@@ -133,6 +161,8 @@ def get_meals(driver, url):
 
                 print(f"\t\t\tdietary restrictions:{', '.join(dietary_restriction)}")
                 print(f"\t\t\tallergens: {', '.join(allergen)}")
+
+
 
     
  
