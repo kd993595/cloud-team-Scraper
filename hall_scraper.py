@@ -14,17 +14,24 @@ from hall_scraper import get_locs
 '''
 
 # Imports
-import time
+import argparse
 import pandas as pd
+import pickle as pkl
+import os.path
+import time
 
 from bs4 import BeautifulSoup
+from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
+# Global Variables
 skip_meals = ["All"]
+columns = ["food_name", "dietary_restriction", "allergen", "description", "dining_hall", "meal", "station"]
 
 def main():
     food_info = get_daily()
@@ -47,11 +54,14 @@ def get_daily():
         options.add_argument('--blink-settings=imagesEnabled=false')
         #options.add_argument("--disable-gpu")
         options.add_argument("--log-level=1")
+        # Hide UI window
+        #options.add_argument("--headless=new")
 
         driver = webdriver.Chrome(options=options)
         driver.get("https://dining.columbia.edu/")
     except Exception as e:
         print(f"ERROR: Unable to get webpage with chrome driver: {e}")
+        return
 
     try: # Wait for page to load
         wait = WebDriverWait(driver, 10)
@@ -59,7 +69,7 @@ def get_daily():
     except Exception as e:
         print(f"ERROR: Unable to load page: {e}")
         driver.quit()
-        return -1
+        return
 
     try: # Open dining hall urls
         halls = hall_menu.find_elements(By.CSS_SELECTOR, 'li > a')
@@ -75,6 +85,10 @@ def get_daily():
         return -1
     
     driver.quit()
+
+    filename = os.path.join("output", f"scrape_{datetime.now().strftime('%d-%m-%Y')}.pkl")
+    with open(filename, 'wb') as handle:
+        pkl.dump(food_info, handle, protocol=pkl.HIGHEST_PROTOCOL)
     return food_info
 
 def _del_privacy(driver):
@@ -170,17 +184,17 @@ def _get_meals(driver, url, privacy):
             for f in food_elems:
                 food_name = f.find_element(By.TAG_NAME, 'h5').text
                 # print(f"\t\tfood: {food_name}")
-                dietary_restriction = []
-                allergen = []
+                dietary_restriction = ''
+                allergen = ''
                 description = ""
                 try:
-                    dietary_restriction = f.find_element(By.TAG_NAME, 'strong').text.split(', ')
+                    dietary_restriction = f.find_element(By.TAG_NAME, 'strong').text
                 except NoSuchElementException as e:
                     #print("No dietary restrictions.")
                     pass
                 
                 try:
-                    allergen = f.find_element(By.TAG_NAME, 'em').text.replace("Contains: ", "").split(', ')
+                    allergen = f.find_element(By.TAG_NAME, 'em').text.replace("Contains: ", "")
                 except NoSuchElementException as e:
                     #print("No allergens.")
                     pass
@@ -194,9 +208,8 @@ def _get_meals(driver, url, privacy):
                 # print(f"\t\t\tallergens: {', '.join(allergen)}")
                 # print(f"\t\t\tdescritpion: {description}")
                 
-                food_list.append([food_name, dietary_restriction, allergen, description, meal, stations[i], dining_hall])
+                food_list.append([food_name, dietary_restriction, allergen, description, dining_hall, meal, stations[i]])
 
-    columns = ["food_name", "dietary_restrictions", "allergen", "description", "meal", "station", "dining_hall"]
     df = pd.DataFrame(data=food_list, columns=columns)
     return dining_hall, df
     

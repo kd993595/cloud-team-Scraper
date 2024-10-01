@@ -1,2 +1,6 @@
 # ignore all ipynb files
 *.ipynb
+
+# ignore pycache
+__pycache__/
+output/
