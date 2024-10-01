@@ -86,7 +86,7 @@ def get_daily():
     
     driver.quit()
 
-    filename = os.path.join("output", f"scrape_{datetime.now().strftime('%d-%m-%Y')}.pkl")
+    filename = os.path.join("output", f"scrape_{datetime.now().strftime('%Y-%m-%d')}.pkl")
     with open(filename, 'wb') as handle:
         pkl.dump(food_info, handle, protocol=pkl.HIGHEST_PROTOCOL)
     return food_info
