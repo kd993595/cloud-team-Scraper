@@ -1,18 +1,27 @@
 '''Inserts data from scraping into database.
 
+Works with two tables:
+	1. "food": master menu with all food items scraped to date
+			without associated to date
+	2. "daily": menu of what food items are available for certain date
+
+If there is data in output folder for given date, uses already scraped data.
+If not, calls scraper to get data.
+
+There is a main function for testing purposes.
+External functions:
+	food_to_db: Inserts food items into database tables.
+	get_daily: Returns food items and their info for given date.
 '''
+
 # Imports
 import argparse
 import os
 import pandas as pd
-import pickle as pkl
 
 from datetime import datetime
 from sqlalchemy import create_engine, text
-from hall_scraper import get_daily
-
-# import mysql.connector
-# from hall_scraper import get_food
+from hall_scraper import scrape_daily
 
 def main():
 	parser = argparse.ArgumentParser()
@@ -21,12 +30,26 @@ def main():
 	parser.add_argument('-s', '--server', default='localhost')
 	parser.add_argument('-d', '--database', default='scraper_db')
 	parser.add_argument('--date', default=datetime.now().strftime(f'%Y-%m-%d'))
+	parser.add_argument('-o', '--output', default='output')
 	args = parser.parse_args()
 
-	food_to_db(args.username, args.password, args.server, args.database)
-	get_date(args.username, args.password, args.server, args.database, args.date)
+	scrape_to_db(args.username, args.password, args.server, args.database, args.output, args.date)
+	get_daily(args.username, args.password, args.server, args.database, args.date)
 
-def food_to_db(username, password, host, database):
+def scrape_to_db(username, password, host, database, output, date):
+	"""Inserts food items into database tables.
+
+	Inserts each food item into both master and daily tables, 
+	checking integrity before insertion.
+
+	Args:
+		username: MySQL user
+		password: password for user
+		server: host IP address
+		database: name of database (schema)
+		output: folder in which to find CSV file with scraped data
+		date: date from which to insert data
+	"""
 	engine = get_engine(username, password, host)
 
 	with engine.connect() as conn:
@@ -79,13 +102,13 @@ def food_to_db(username, password, host, database):
 		# Get food information dictionary
 		date = datetime.now().strftime(f'%Y-%m-%d')
 		
-		file = os.path.join("output", f"scrape_{date}.csv")
+		file = os.path.join(output, f"scrape_{date}.csv")
 		if os.path.exists(file):
 			# Already scraped today, use previous data
 			df = pd.read_csv(file)
 		else:
 			# Scrape data
-			df = get_daily()
+			df = scrape_daily()
 
 		for _, row in df.iterrows():
 			try: # Insert food item into master menu
@@ -119,7 +142,19 @@ def food_to_db(username, password, host, database):
 			except Exception as e:
 				print(f"\tERROR: Failed insertion into {database}.daily: {e}")
 
-def get_date(username, password, host, database, date):
+def get_daily(username, password, host, database, date):
+	"""Gets food items and their info for specified date.
+
+	Args:
+		username: MySQL user
+		password: password for user
+		server: host IP address
+		database: name of database (schema)
+		date: YYYY-MM-DD to match date attribute in daily table
+
+	Returns:
+		DataFrame with food item information for given date.
+	"""
 	engine = get_engine(username, password, host)
 	query = text(f"""
 		SELECT * 
@@ -132,16 +167,35 @@ def get_date(username, password, host, database, date):
 	return df
 
 def execute_query(engine, query):
+	"""Executes a SQL query.
+
+	Args:
+		engine: engine object for server connection (not database)
+		query: string with SQL query
+	
+	Returns:
+		Information returned from query.
+	"""
 	try:
 		with engine.connect() as conn:
 			res = conn.execute(query)
 	except Exception as e:
 		print(f"Unable to execute query: {query[:20]}...")
 		return
-
+	
 	return res
 
 def table_exists(engine, database, table_name):
+	"""Check if table exists.
+
+	Args:
+		engine: engine object for server connection (not database)
+		database: Database (schema) name
+		table_name: Name of table within schema
+	
+	Returns:
+		Table name if it exists. Else returns None.
+	"""
 	try:
 		with engine.connect() as conn:
 			query = text(f"""SELECT TABLE_NAME
@@ -152,20 +206,18 @@ def table_exists(engine, database, table_name):
 			return res.fetchall()
 	except Exception as e:
 		print("ERROR: Table exists query failed.")
-
 	return
 
 def get_engine(username, password, host):
+	"""Construct engine object.
+
+	Args:
+		username: MySQL user
+		password: password for user
+		host: host IP address
+	"""
 	engine = create_engine(f"mysql+pymysql://{username}:{password}@{host}")
 	return engine
-
-def df_to_db(df, table, schema, engine):
-	try:
-		df.to_sql(table, schema=schema, index=False, if_exists="append", con=engine)
-	except Exception as e:
-		print(f"ERROR: Failed inserting DataFrame into table {table} of schema {schema}.")
-		return -1
-	return 0
 
 if __name__ == "__main__":
 	main()

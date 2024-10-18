@@ -4,13 +4,8 @@ Interacts with dynamic web pages and formats menu as dataframe.
 Prepares for insertion into database table.
 
 There is a main function for testing purposes.
-External facing function for module interfacing is get_locs().
-
-Typical usage example:
-
-python3 main.py
-
-from hall_scraper import get_daily
+External functions:
+    scrape_daily: Gets today's data from Columbia Dining website.
 '''
 
 # Imports
@@ -31,12 +26,12 @@ skip_meals = ["All"]
 columns = ["food_name", "dietary_restriction", "allergen", "description", "dining_hall", "meal", "station"]
 
 def main():
-    print(get_daily())
+    print(scrape_daily())
 
-def get_daily():
+def scrape_daily():
     '''Gets today's data from Columbia Dining website.
     
-    Gets URLs for dining hall pages and calls _get_meals
+    Gets URLs for dining hall pages and calls _scrape_meals
     to scrape data for dining hall.
 
     Returns:
@@ -83,7 +78,7 @@ def get_daily():
         halls = hall_menu.find_elements(By.CSS_SELECTOR, 'li > a')
         urls = [h.get_attribute('href') for h in halls]
         for i in range(len(urls)):
-            dining_hall, df  = _get_meals(driver, urls[i])
+            dining_hall, df  = _scrape_meals(driver, urls[i])
             if dining_hall == -1:
                 continue
             hall_list.append(df)
@@ -127,7 +122,7 @@ def _del_privacy(driver):
         print(f"Error clicking privacy notice close.")
     time.sleep(2)
 
-def _get_meals(driver, url):
+def _scrape_meals(driver, url):
     '''Gets food information for dining hall.
 
     Args:
