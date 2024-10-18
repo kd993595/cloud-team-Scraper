@@ -1,25 +1,23 @@
-from flask import request, Flask, jsonify
-from flask_cors import CORS
-from db import insert_food, get_food_db
-from hall_scraper import get_food
-app = Flask(__name__)
-cors = CORS(app)
 
-@app.route("/test", methods=["GET"])
-def test():
+# Imports
+import uvicorn
+from fastapi import FastAPI
+from db import get_daily
+
+app = FastAPI()
+
+@app.get("/")
+async def root():
+    return {"message": "test"}
     
-    response = "hello"
-    response = {"test": response}
-    return jsonify(response), 200
 
-@app.route("/getfood", methods=["GET"])
-def food():
-    
-    response = get_food_db()
-    response = {"food_items": response}
-    return jsonify(response), 200
-
-
+@app.get("/today")
+async def today():
+    response = get_daily()
+    if response is None:
+        return {"message": "Failed to retrieve daily menu."}
+    else:
+        return response.to_json(orient='index')
 
 if __name__ == "__main__":
-    app.run(host='localhost', port=8080)
+    uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=True)

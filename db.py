@@ -16,6 +16,7 @@ External functions:
 
 # Imports
 import argparse
+import numpy as np
 import os
 import pandas as pd
 
@@ -142,7 +143,11 @@ def scrape_to_db(username, password, host, database, output, date):
 			except Exception as e:
 				print(f"\tERROR: Failed insertion into {database}.daily: {e}")
 
-def get_daily(username, password, host, database, date):
+def get_daily(username="root", 
+			  password="dbuserdbuser", 
+			  host="localhost", 
+			  database="scraper_db", 
+			  date=datetime.now().strftime(f'%Y-%m-%d')):
 	"""Gets food items and their info for specified date.
 
 	Args:
@@ -156,15 +161,19 @@ def get_daily(username, password, host, database, date):
 		DataFrame with food item information for given date.
 	"""
 	engine = get_engine(username, password, host)
-	query = text(f"""
-		SELECT * 
-			FROM (
-				SELECT * FROM {database}.daily
-				WHERE date='{date}') AS today
-		LEFT JOIN {database}.food
-			ON today.food_id = food.food_id;""")
-	df = pd.DataFrame(execute_query(engine, query).fetchall())
-	return df
+	try:
+		query = text(f"""
+			SELECT * 
+				FROM (
+					SELECT * FROM {database}.daily
+					WHERE date='{date}') AS today
+			LEFT JOIN {database}.food
+				ON today.food_id = food.food_id;""")
+		df = pd.DataFrame(execute_query(engine, query).fetchall())
+		return df.iloc[:, np.delete(np.arange(df.shape[1]), [1, 2])]
+	except Exception as e:
+		print("Unable to retrieve daily menu.")
+		return
 
 def execute_query(engine, query):
 	"""Executes a SQL query.
