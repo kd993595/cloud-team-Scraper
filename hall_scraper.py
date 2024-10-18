@@ -10,17 +10,14 @@ Typical usage example:
 
 python3 main.py
 
-from hall_scraper import get_locs
+from hall_scraper import get_daily
 '''
 
 # Imports
-import argparse
 import pandas as pd
-import pickle as pkl
 import os.path
 import time
 
-from bs4 import BeautifulSoup
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -34,20 +31,30 @@ skip_meals = ["All"]
 columns = ["food_name", "dietary_restriction", "allergen", "description", "dining_hall", "meal", "station"]
 
 def main():
-    food_info = get_daily()
-    for hall in food_info:
-        print(f"Dining Hall: {hall}")
-        print(food_info[hall])
+    print(get_daily())
 
 def get_daily():
-    '''Gets URLs for dining hall landing pages.
+    '''Gets today's data from Columbia Dining website.
+    
+    Gets URLs for dining hall pages and calls _get_meals
+    to scrape data for dining hall.
 
     Returns:
-        Dictionary where keys are dining hall names
-        and values are DataFrames with food item info.
+        On success, a DataFrame with info from all dining halls
+        in the following columns:
+            food_name
+            dietary_restriction: e.g., Gluten Free, Halal, Vegan
+            allergen: e.g., Eggs, Shellfish, Soy, Wheat
+            description: notable ingredients
+            dining_hall
+            meal: meal of the day (e.g., Breakfast)
+            station: e.g., Main Line, Action Station, Soup Station
+        
+        On failure, -1.
     '''
-    food_info = dict()
-    try:
+    hall_list = [] # Intialize empty DataFrame
+
+    try: # Open Columbia Dining main page
         options = Options()
 
         # Don't load images
@@ -59,9 +66,10 @@ def get_daily():
 
         driver = webdriver.Chrome(options=options)
         driver.get("https://dining.columbia.edu/")
+        time.sleep(5)
     except Exception as e:
         print(f"ERROR: Unable to get webpage with chrome driver: {e}")
-        return
+        return -1
 
     try: # Wait for page to load
         wait = WebDriverWait(driver, 10)
@@ -69,16 +77,16 @@ def get_daily():
     except Exception as e:
         print(f"ERROR: Unable to load page: {e}")
         driver.quit()
-        return
+        return -1
 
     try: # Open dining hall urls
         halls = hall_menu.find_elements(By.CSS_SELECTOR, 'li > a')
         urls = [h.get_attribute('href') for h in halls]
         for i in range(len(urls)):
-            dining_hall, df  = _get_meals(driver, urls[i], True if i == 0 else False)
+            dining_hall, df  = _get_meals(driver, urls[i])
             if dining_hall == -1:
                 continue
-            food_info[dining_hall] = df
+            hall_list.append(df)
     except Exception as e:
         print(f"ERROR: Unable to open dining hall URLS: {e}")
         driver.quit()
@@ -86,10 +94,11 @@ def get_daily():
     
     driver.quit()
 
-    filename = os.path.join("output", f"scrape_{datetime.now().strftime('%Y-%m-%d')}.pkl")
-    with open(filename, 'wb') as handle:
-        pkl.dump(food_info, handle, protocol=pkl.HIGHEST_PROTOCOL)
-    return food_info
+    food_df = pd.concat(hall_list).reset_index(drop=True)
+    filename = os.path.join("output", f"scrape_{datetime.now().strftime('%Y-%m-%d')}.csv")
+    food_df.to_csv(filename, index=False)
+
+    return food_df
 
 def _del_privacy(driver):
     '''Addresses privacy notice.
@@ -118,15 +127,17 @@ def _del_privacy(driver):
         print(f"Error clicking privacy notice close.")
     time.sleep(2)
 
-def _get_meals(driver, url, privacy):
+def _get_meals(driver, url):
     '''Gets food information for dining hall.
 
     Args:
         driver: Selenium Chrome webdriver
         url: Link to dining hall landing page.
+        privacy: Whether to close privacy notice (that blocks food information).
+            Only necessary for first dining hall.
 
     Returns:
-        Pandas DataFrame where each row contains information for one food item
+        DataFrame where each row contains information for one food item
         with the following columns:
             food_name
             dietary_restriction
@@ -136,16 +147,15 @@ def _get_meals(driver, url, privacy):
             station
             dining_hall
     '''
-    # driver = webdriver.Chrome()
-    # driver.get("https://dining.columbia.edu/content/ferris-booth-commons-0")
-
+    
     wait = WebDriverWait(driver, 10)
 
-    print(f"\tNew Tab: {url}")
+    # Open new tab and go to dining hall web page
+    print(f"New Tab: {url}")
     driver.execute_script(f"window.open('{url}', '_blank');")
     driver.switch_to.window(driver.window_handles[-1])
 
-    try:
+    try: # Wait for dining hall name to load
         dining_hall = wait.until(
             EC.presence_of_element_located((By.CLASS_NAME, 'node-title.ng-binding'))).text
         print(dining_hall)
@@ -153,10 +163,10 @@ def _get_meals(driver, url, privacy):
         print(f"\tERROR: Unable to get dining hall name.")
         return -1, -1
     
-    if privacy:
-        _del_privacy(driver)
+    # Remove privacy notice
+    _del_privacy(driver)
 
-    try:
+    try: # Wait for menu of meals
         meal_elems = wait.until(
             EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'div.cu-dining-menu-tabs button')))
     except Exception as e:
@@ -164,49 +174,44 @@ def _get_meals(driver, url, privacy):
         return -1, -1
     
     food_list = []
+
+    # Iterate through each meal of the day
     for m in meal_elems:
         meal = m.text
-        if meal in skip_meals:
+        if meal in skip_meals: # Exclude hard-coded meals (e.g., ALl)
             continue
 
-        # print(f"meal: {meal}")
-
+        # Choose meal of day and wait for food items to load
         m.click()
         station_elems = wait.until(
             EC.presence_of_all_elements_located((By.CLASS_NAME, 'station-title.ng-binding')))
         stations = [s.text for s in station_elems]
         food_container = wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, 'meal-items')))
 
+        # Iterate through stations
         for i in range(len(food_container)):
-            # print(f"\tstation:{stations[i]}")
             food_elems = food_container[i].find_elements(By.CLASS_NAME, 'meal-item.angular-animate.ng-trans-fade-down.ng-scope')
             
+            # Iterate through station food items
             for f in food_elems:
                 food_name = f.find_element(By.TAG_NAME, 'h5').text
-                # print(f"\t\tfood: {food_name}")
                 dietary_restriction = ''
                 allergen = ''
                 description = ""
                 try:
                     dietary_restriction = f.find_element(By.TAG_NAME, 'strong').text
                 except NoSuchElementException as e:
-                    #print("No dietary restrictions.")
                     pass
                 
                 try:
                     allergen = f.find_element(By.TAG_NAME, 'em').text.replace("Contains: ", "")
                 except NoSuchElementException as e:
-                    #print("No allergens.")
                     pass
 
                 try:
                     description = f.find_element(By.CLASS_NAME, 'meal-description.ng-binding.ng-scope').text
                 except NoSuchElementException as e:
                     pass
-
-                # print(f"\t\t\tdietary restrictions:{', '.join(dietary_restriction)}")
-                # print(f"\t\t\tallergens: {', '.join(allergen)}")
-                # print(f"\t\t\tdescritpion: {description}")
                 
                 food_list.append([food_name, dietary_restriction, allergen, description, dining_hall, meal, stations[i]])
 

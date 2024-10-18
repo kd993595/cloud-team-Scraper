@@ -20,9 +20,11 @@ def main():
 	parser.add_argument('-p', '--password', default='dbuserdbuser')
 	parser.add_argument('-s', '--server', default='localhost')
 	parser.add_argument('-d', '--database', default='scraper_db')
+	parser.add_argument('--date', default=datetime.now().strftime(f'%Y-%m-%d'))
 	args = parser.parse_args()
 
 	food_to_db(args.username, args.password, args.server, args.database)
+	get_date(args.username, args.password, args.server, args.database, args.date)
 
 def food_to_db(username, password, host, database):
 	engine = get_engine(username, password, host)
@@ -76,49 +78,58 @@ def food_to_db(username, password, host, database):
 
 		# Get food information dictionary
 		date = datetime.now().strftime(f'%Y-%m-%d')
-		file = os.path.join("output", f"scrape_{date}.pkl")
+		
+		file = os.path.join("output", f"scrape_{date}.csv")
 		if os.path.exists(file):
 			# Already scraped today, use previous data
-			with open(file, 'rb') as handle:
-				food_info = pkl.load(handle)
+			df = pd.read_csv(file)
 		else:
 			# Scrape data
-			food_info = get_daily()
+			df = get_daily()
 
-		for k in food_info:
-			print(f"Processing dining hall daily menu: {k}")
-			df = food_info[k]
-			for _, row in df.iterrows():
-				try:
-					cols = row.index
-					vals = [f'"{r}"' for r in row.values]
-					where = [f'{cols[i]}="{row.values[i]}"' for i in range(len(cols))]
+		for _, row in df.iterrows():
+			try: # Insert food item into master menu
+				cols = row.index
+				vals = [f'"{r}"' for r in row.values]
+				where = [f'{cols[i]}="{row.values[i]}"' for i in range(len(cols))]
 
-					# Insertion into master menu
-					query = text(f"SELECT * FROM {database}.food WHERE {' AND '.join(where)};")
-					res = conn.execute(query)
-					if not res.fetchall():
-						# Food item not already in master menu
-						query = text(f"INSERT INTO {database}.food ({', '.join(cols)}) VALUES ({', '.join(vals)});")
-						conn.execute(query)
-						conn.commit()
-						print(f"\tInserted item into {database}.food: {row[0]} ")
-				except Exception as e:
-					print(f"\tERROR: Failed insertion into {database}.food: {e}")
-					
-				try:
-					query = text(f"SELECT food_id FROM {database}.food WHERE {' AND '.join(where)};")
-					food_id = conn.execute(query).scalar()
+				# Insertion into master menu
+				query = text(f"SELECT * FROM {database}.food WHERE {' AND '.join(where)};")
+				res = conn.execute(query)
+				if not res.fetchall():
+					# Food item not already in master menu
+					query = text(f"INSERT INTO {database}.food ({', '.join(cols)}) VALUES ({', '.join(vals)});")
+					conn.execute(query)
+					conn.commit()
+					print(f"\tInserted item into {database}.food: {row[0]} ")
+			except Exception as e:
+				print(f"\tERROR: Failed insertion into {database}.food: {e}")
+				
+			try: # Insert food item into daily menu
+				query = text(f"SELECT food_id FROM {database}.food WHERE {' AND '.join(where)};")
+				food_id = conn.execute(query).scalar()
 
-					query = text(f"SELECT * FROM {database}.daily WHERE food_id={food_id} and date='{date}'")
-					res = conn.execute(query)
-					if not res.fetchall():
-						query = text(f"INSERT INTO {database}.daily (date, food_id) VALUES('{date}', '{food_id}')")
-						conn.execute(query)
-						conn.commit()
-						print(f"\tInserted item into {database}.daily: {row[0]}")
-				except Exception as e:
-					print(f"\tERROR: Failed insertion into {database}.daily: {e}")
+				query = text(f"SELECT * FROM {database}.daily WHERE food_id={food_id} and date='{date}'")
+				res = conn.execute(query)
+				if not res.fetchall():
+					query = text(f"INSERT INTO {database}.daily (date, food_id) VALUES('{date}', '{food_id}')")
+					conn.execute(query)
+					conn.commit()
+					print(f"\tInserted item into {database}.daily: {row[0]}")
+			except Exception as e:
+				print(f"\tERROR: Failed insertion into {database}.daily: {e}")
+
+def get_date(username, password, host, database, date):
+	engine = get_engine(username, password, host)
+	query = text(f"""
+		SELECT * 
+			FROM (
+				SELECT * FROM {database}.daily
+				WHERE date='{date}') AS today
+		LEFT JOIN {database}.food
+			ON today.food_id = food.food_id;""")
+	df = pd.DataFrame(execute_query(engine, query).fetchall())
+	return df
 
 def execute_query(engine, query):
 	try:
@@ -129,18 +140,6 @@ def execute_query(engine, query):
 		return
 
 	return res
-
-def food_exists(engine, database, table_name, row):
-	try:
-		with engine.connect() as conn:
-			query = text(f"""
-				SELECT EXISTS (
-					SELECT * FROM {database}.table_name
-					WHERE 
-				)
-			""")
-	except Exception as e:
-		print("ERROR: Table row exists query failed.")
 
 def table_exists(engine, database, table_name):
 	try:
@@ -157,7 +156,7 @@ def table_exists(engine, database, table_name):
 	return
 
 def get_engine(username, password, host):
-	engine = create_engine("mysql+pymysql://root:dbuserdbuser@localhost")
+	engine = create_engine(f"mysql+pymysql://{username}:{password}@{host}")
 	return engine
 
 def df_to_db(df, table, schema, engine):
